@@ -18,6 +18,7 @@
 #include <iostream>
 #include "myutils.h"
 #include <helib/helib.h>
+#include <thread>
 
 //#define DBG_INFO
 
@@ -174,6 +175,90 @@ noise_stat decrypt_stat(const helib::Ctxt& ctxt, const helib::Ptxt<helib::BGV>& 
     return {cap, noise, mod, mean, var, mag};
 }
 
+void test(const helib::Context* c){}
+
+// worker thread
+void thread_func(int param_idx, int samples_count, const std::string& output_file,
+                 int total_levels, int boot_levels, int square_after_boot,
+                 const helib::Context& context, const helib::PubKey& pubKey,
+                 const helib::SecKey& secKey){
+    auto f = std::fopen(output_file.c_str(), "w");
+    fprintf(f, "%d %d %d %d\n", param_idx, total_levels, boot_levels, square_after_boot);
+
+    for(int sample = 0; sample < samples_count; sample++) {
+//        std::cout << "sample " << sample << '\n';
+
+        helib::Ptxt<helib::BGV> ptxt(context);
+        for (int i = 0; i < ptxt.size(); ++i) {
+            ptxt[i] = 1;
+        }
+
+        helib::Ctxt ctxt(pubKey);
+        pubKey.Encrypt(ctxt, ptxt);
+
+        std::vector<noise_stat> noise_stat_vec;
+
+        int levels = 0;
+        while (ctxt.capacity() > 0 && levels < total_levels) {
+
+            noise_stat_vec.push_back(decrypt_stat(ctxt, ptxt, secKey, levels));
+
+            ctxt.square();
+            ptxt.square(); // NOTE: ptxt stores only the slots, not the polynomial (which is a natural idea for efficiency)
+            levels++;
+        }
+
+        noise_stat_vec.push_back(decrypt_stat(ctxt, ptxt, secKey, levels));
+
+        for(int blvl = 0; blvl < boot_levels; blvl++) {
+#ifdef DBG_INFO
+            std::cout << "start bootstrapping No." << blvl << "\n";
+#endif
+            pubKey.thinReCrypt(ctxt);
+
+            // Decrypt the modified ciphertext into a new plaintext
+            NTL::ZZX plaintext_poly_result;
+            noise_stat_vec.push_back(decrypt_stat(ctxt, ptxt, secKey, -1, &plaintext_poly_result));
+
+
+            auto real_poly = ptxt.getPolyRepr();
+            ZZX_mod(real_poly, ctxt.getPtxtSpace());
+            if (plaintext_poly_result != real_poly) {
+                std::cout << deg(plaintext_poly_result) << " xxx " << deg(real_poly) << '\n';
+                for (int i = 0, end = std::min(10, (int) std::min(deg(plaintext_poly_result), deg(real_poly)));
+                     i < end; i++) {
+                    std::cout << plaintext_poly_result[i] << " # " << real_poly[i] << '\n';
+                }
+                std::cout << "ERROR: decryption result doesn't match expected value\n";
+            } else {
+#ifdef DBG_INFO
+                std::cout << "Decryption ok\n";
+#endif
+            }
+
+            if(blvl == boot_levels - 1) // jump out of loop right after the last bootstrapping
+                break;
+
+            for(int slvl = 0; slvl < square_after_boot; slvl++) {
+                // one more square
+                ctxt.square();
+                ptxt.square();
+                noise_stat_vec.push_back(decrypt_stat(ctxt, ptxt, secKey, -2-slvl));
+            }
+        }
+
+        // NOTE: noise_stat_vec has the stat of level 0, 1, ... total_levels, total_levels+1(after bootstrapping)
+        fprintf(f, "SAMPLE %d\n", sample);
+        for(auto stat : noise_stat_vec){
+            fprintf(f, "%f, %f, %f, %f, %f, %f\n",
+                    stat.cap, stat.noise, stat.mod,
+                    stat.mean, stat.var, stat.mag);
+        }
+        std::fflush(f);
+    }
+    std::fclose(f);
+}
+
 int main(int argc, char* argv[]) {
     /*  Example of BGV scheme  */
 
@@ -313,7 +398,7 @@ int main(int argc, char* argv[]) {
 
     // Public key management
     // Set the secret key (upcast: SecKey is a subclass of PubKey)
-    helib::PubKey public_key = secret_key;
+    helib::PubKey public_key = secret_key; // NOTE: when using copy constructor, the public key is a real 'public' key
 
 
     // Get the EncryptedArray of the context
@@ -332,86 +417,30 @@ int main(int argc, char* argv[]) {
      * Get lots of samples
      * ############################
      */
-    int samples_count = 100000;
+    int samples_count = 100000; // something that will never be reached...
     std::string output_file = argc > 1 ? argv[1] : "/dev/null";
     int total_levels = 19;
     int boot_levels = 2;
     int square_after_boot = 2;
-    auto f = std::fopen(output_file.c_str(), "w");
-    fprintf(f, "%d %d %d %d\n", param_idx, total_levels, boot_levels, square_after_boot);
 
-    for(int sample = 0; sample < samples_count; sample++) {
-        std::cout << "sample " << sample << '\n';
-
-        helib::Ptxt<helib::BGV> ptxt(context);
-        for (int i = 0; i < ptxt.size(); ++i) {
-            ptxt[i] = 1;
-        }
-
-        helib::Ctxt ctxt(public_key);
-        public_key.Encrypt(ctxt, ptxt);
-
-        std::vector<noise_stat> noise_stat_vec;
-
-        int levels = 0;
-        while (ctxt.capacity() > 0 && levels < total_levels) {
-
-            noise_stat_vec.push_back(decrypt_stat(ctxt, ptxt, secret_key, levels));
-
-            ctxt.square();
-            ptxt.square(); // NOTE: ptxt stores only the slots, not the polynomial (which is a natural idea for efficiency)
-            levels++;
-        }
-
-        noise_stat_vec.push_back(decrypt_stat(ctxt, ptxt, secret_key, levels));
-
-        for(int blvl = 0; blvl < boot_levels; blvl++) {
-#ifdef DBG_INFO
-            std::cout << "start bootstrapping No." << blvl << "\n";
-#endif
-            public_key.thinReCrypt(ctxt);
-
-            // Decrypt the modified ciphertext into a new plaintext
-            NTL::ZZX plaintext_poly_result;
-            noise_stat_vec.push_back(decrypt_stat(ctxt, ptxt, secret_key, -1, &plaintext_poly_result));
-
-
-            auto real_poly = ptxt.getPolyRepr();
-            ZZX_mod(real_poly, ctxt.getPtxtSpace());
-            if (plaintext_poly_result != real_poly) {
-                std::cout << deg(plaintext_poly_result) << " xxx " << deg(real_poly) << '\n';
-                for (int i = 0, end = std::min(10, (int) std::min(deg(plaintext_poly_result), deg(real_poly)));
-                     i < end; i++) {
-                    std::cout << plaintext_poly_result[i] << " # " << real_poly[i] << '\n';
-                }
-                std::cout << "ERROR: decryption result doesn't match expected value\n";
-            } else {
-#ifdef DBG_INFO
-                std::cout << "Decryption ok\n";
-#endif
-            }
-
-            if(blvl == boot_levels - 1) // jump out of loop right after the last bootstrapping
-                break;
-
-            for(int slvl = 0; slvl < square_after_boot; slvl++) {
-                // one more square
-                ctxt.square();
-                ptxt.square();
-                noise_stat_vec.push_back(decrypt_stat(ctxt, ptxt, secret_key, -2-slvl));
-            }
-        }
-
-        // NOTE: noise_stat_vec has the stat of level 0, 1, ... total_levels, total_levels+1(after bootstrapping)
-        fprintf(f, "SAMPLE %d\n", sample);
-        for(auto stat : noise_stat_vec){
-            fprintf(f, "%f, %f, %f, %f, %f, %f\n",
-                    stat.cap, stat.noise, stat.mod,
-                    stat.mean, stat.var, stat.mag);
-        }
-        std::fflush(f);
+    int workers = argc > 2 ? std::stoi(argv[2]) : 1; // default to 1 thread
+    std::vector<std::thread> threads;
+    threads.reserve(workers);
+    for(int i = 0; i < workers; i++){
+        threads.emplace_back(thread_func,
+                                      param_idx,
+                                      samples_count,
+                                      output_file + "_" + std::to_string(i),
+                                      total_levels,
+                                      boot_levels,
+                                      square_after_boot,
+                                      std::cref(context),
+                                      std::cref(public_key),
+                                      std::cref(secret_key));
     }
-    std::fclose(f);
+
+    for(auto& t : threads)
+        t.join();
 
     return 0;
 }
