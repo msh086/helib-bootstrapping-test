@@ -336,9 +336,6 @@ int main(int argc, char* argv[]) {
     auto gens = calculateGens(param_idx);
     auto ords = calculateOrds(param_idx);
 
-    // NOTE: use the parameters from homomorphic aes
-
-
     std::cout << "\n*********************************************************";
     std::cout << "\n*         Basic Mathematical Operations Example         *";
     std::cout << "\n*         =====================================         *";
