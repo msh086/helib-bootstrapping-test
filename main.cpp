@@ -134,6 +134,12 @@ struct noise_stat{
     double mean, var, mag;
 };
 
+double get_securityLevel(double logprime, double stddev, int m, int hwt_param=120)
+{
+    double log2AlphaInv = (logprime - log(stddev)) / log(2.0);
+    return helib::lweEstimateSecurity(m, log2AlphaInv, hwt_param);
+}
+
 noise_stat decrypt_stat(const helib::Ctxt& ctxt, const helib::Ptxt<helib::BGV>& expected_ptxt,
                         const helib::SecKey& secKey, int curlevel, NTL::ZZX* dst=nullptr){
     auto& context = ctxt.getContext();
@@ -365,6 +371,8 @@ int main(int argc, char* argv[]) {
             .thinboot()
             .buildCache(true)
             .build();
+
+    std::cout << "hwt is " << context.getHwt() << '\n';
 
     // Print the context
     context.printout();
