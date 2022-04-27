@@ -20,7 +20,7 @@
 #include <helib/helib.h>
 #include <thread>
 
-//#define DBG_INFO
+#define DBG_INFO
 
 // NOTE: reference: 'tests/GTestThinBootstrapping.cpp'
 
@@ -427,7 +427,7 @@ int main(int argc, char* argv[]) {
         threads.emplace_back(thread_func,
                                       param_idx,
                                       samples_count,
-                                      output_file + "_" + std::to_string(i),
+                                      output_file == "/dev/null" ? "/dev/null" : output_file + "_" + std::to_string(i),
                                       total_levels,
                                       boot_levels,
                                       square_after_boot,
