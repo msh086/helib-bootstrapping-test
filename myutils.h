@@ -22,7 +22,8 @@ void mean_var_mag(const NTL::ZZX& poly, double& mean_dst, double& var_dst, doubl
     mean /= len;
     var /= len;
     var -= mean * mean;
-    mean_dst = std::log2(std::abs(mean)); // may be negative
+//    mean_dst = std::log2(std::abs(mean)); // may be negative
+	mean_dst = mean; // NOTE: need to keep the sign!
     var_dst = std::log2(var);
     mag_dst = std::log2(mag);
 }

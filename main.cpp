@@ -134,10 +134,31 @@ struct noise_stat{
     double mean, var, mag;
 };
 
-double get_securityLevel(double logprime, double stddev, int m, int hwt_param=120)
+double get_securityLevel(double logprime, double logstddev, int m, int hwt_param=120)
 {
-    double log2AlphaInv = (logprime - log(stddev)) / log(2.0);
+    double log2AlphaInv = (logprime - logstddev) / log(2.0);
     return helib::lweEstimateSecurity(m, log2AlphaInv, hwt_param);
+}
+
+double logprime[] = {377.196223, 551.028904, 551.028904, 551.028904, 497.17271, 
+497.17271, 497.17271, 443.332957, 443.332957, 443.332957, 443.332957, 389.332957, 
+389.332957, 389.332957, 335.443101, 335.443101, 335.443101, 335.443101, 281.558578,
+ 281.558578, 551.028904, 281.558578, 281.558578, 551.028904};
+
+double logvar[] = {
+	53.81196467, 425.00451539, 454.2896047,  484.67851095, 409.9467765,
+ 440.71006199, 472.29365283, 394.56467159, 428.90243816, 458.81038425,
+ 489.07074243, 411.11519619, 441.30702801, 472.24264313, 397.2792139,
+ 429.37315562, 459.70369595, 489.44625577, 415.71569875, 446.08040452,
+ 936.66303501, 429.72766923, 465.75108585, 936.68607898
+};
+
+void test_security(){
+	for(int i = 0; i < 24; i++){
+		double logp = logprime[i];
+		double logstddev = logvar[i] / 2;
+		std::printf("level=%d logp=%f logstddev=%f security=%f\n", i, logp, logstddev, get_securityLevel(logp, logstddev, 23040));
+	}
 }
 
 noise_stat decrypt_stat(const helib::Ctxt& ctxt, const helib::Ptxt<helib::BGV>& expected_ptxt,
@@ -265,45 +286,43 @@ void thread_func(int param_idx, int samples_count, const std::string& output_fil
     std::fclose(f);
 }
 
-int main(int argc, char* argv[]) {
-    /*  Example of BGV scheme  */
+void interactive_try_security(){
+	int test_idx;
+	int test_r;
+	int test_bits;
+	while(true){
+       std::cout << "input idx:";
+       std::cin >> test_idx;
+       std::cout << "input r:";
+       std::cin >> test_r;
+       std::cout << "input bits:";
+       std::cin >> test_bits;
+       if(test_idx < 0 || test_idx >= num_mValues || test_r <= 0 || test_bits <= 0)
+           return;
 
-//    int test_idx;
-//    int test_r;
-//    int test_bits;
-//    while(true){
-//        std::cout << "input idx:";
-//        std::cin >> test_idx;
-//        std::cout << "input r:";
-//        std::cin >> test_r;
-//        std::cout << "input bits:";
-//        std::cin >> test_bits;
-//        if(test_idx < 0 || test_idx >= num_mValues || test_r <= 0 || test_bits <= 0)
-//            return 0;
-//
-//        auto p = mValues[test_idx][0];
-//        auto m = mValues[test_idx][2];
-//        auto mvec = calculateMvec(test_idx);
-//        auto gens = calculateGens(test_idx);
-//        auto ords = calculateOrds(test_idx);
-//
-//        helib::Context context = helib::ContextBuilder<helib::BGV>()
-//                .m(m)
-//                .p(p)
-//                .bits(test_bits)
-//                .r(test_r)
-//                .c(3)
-//                .mvec(mvec)
-//                .ords(ords)
-//                .gens(gens)
-//                .bootstrappable()
-//                .thinboot()
-//                .buildCache(true)
-//                .build();
-//        std::cout << "security level: " << context.securityLevel() << '\n';
-//        std::cout << "prime size: " << context.logOfPrime(context.getCtxtPrimes(1).first()) << '\n';
-//        std::cout << "q size: " << context.bitSizeOfQ() << '\n';
-//    }
+       auto p = mValues[test_idx][0];
+       auto m = mValues[test_idx][2];
+       auto mvec = calculateMvec(test_idx);
+       auto gens = calculateGens(test_idx);
+       auto ords = calculateOrds(test_idx);
+
+       helib::Context context = helib::ContextBuilder<helib::BGV>()
+               .m(m)
+               .p(p)
+               .bits(test_bits)
+               .r(test_r)
+               .c(3)
+               .mvec(mvec)
+               .ords(ords)
+               .gens(gens)
+               .bootstrappable()
+               .thinboot()
+               .buildCache(true)
+               .build();
+       std::cout << "security level: " << context.securityLevel() << '\n';
+       std::cout << "prime size: " << context.logOfPrime(context.getCtxtPrimes(1).first()) << '\n';
+       std::cout << "q size: " << context.bitSizeOfQ() << '\n';
+   }
 
     /**
      * idx  bits    valid
@@ -314,7 +333,31 @@ int main(int argc, char* argv[]) {
      * 11   340     v(1)
      * 12   359     v(2)
      */
+}
 
+int main(int argc, char* argv[]) {
+	
+	bool arg_ok = true;
+	if(argc > 1){
+		if(std::strncmp(argv[1], "security", 9) == 0){
+			test_security();
+			return 0;
+		}
+		else if(std::strncmp(argv[1], "interactive", 12) == 0){
+			interactive_try_security();
+			return 0;
+		}
+		else if(std::strncmp(argv[1], "sample", 7) != 0 || argc <= 2 || argc > 4)
+			arg_ok = false;
+	}
+	else
+		arg_ok = false;
+	if(!arg_ok){
+		printf("Usage: %s {security|interactive|sample} output_file [number_of_threads]\n", argv[0]);
+		return 0;
+	}
+	
+	
     // Plaintext prime modulus
     unsigned long p = 2;
     // Hensel lifting (default = 1) NOTE: plaintext space is p^r
@@ -423,12 +466,12 @@ int main(int argc, char* argv[]) {
      * ############################
      */
     int samples_count = 100000; // something that will never be reached...
-    std::string output_file = argc > 1 ? argv[1] : "/dev/null";
+    std::string output_file = argc > 2 ? argv[2] : "/dev/null";
     int total_levels = 19;
     int boot_levels = 2;
     int square_after_boot = 2;
 
-    int workers = argc > 2 ? std::stoi(argv[2]) : 1; // default to 1 thread
+    int workers = argc > 3 ? std::stoi(argv[3]) : 1; // default to 1 thread
     std::vector<std::thread> threads;
     threads.reserve(workers);
     for(int i = 0; i < workers; i++){
